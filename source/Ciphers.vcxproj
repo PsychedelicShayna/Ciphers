@@ -118,7 +118,11 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="cipher.h" />
+    <ClInclude Include="ciphers.h" />
+    <ClInclude Include="headers\atbash.h" />
+    <ClInclude Include="headers\caesar.h" />
+    <ClInclude Include="headers\polybius.h" />
+    <ClInclude Include="headers\vigenere.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

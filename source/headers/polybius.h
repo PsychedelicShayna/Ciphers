@@ -24,7 +24,7 @@ public:
 		DuplicateCharInKeyException() : std::exception("The key has duplicate characters inside of it.") {}
 	};
 
-	static matrix<uint32_t> inscribe_matrix(std::vector<uint32_t> base, std::vector<uint32_t> key, uint32_t matrix_size) {
+	static matrix<uint32_t> create_matrix(std::vector<uint32_t> base, std::vector<uint32_t> key, uint32_t matrix_size) {
 		matrix<uint32_t> matrix_buffer;
 		uint32_t current_key_index = 0;
 		uint32_t current_base_index = 0;
@@ -66,7 +66,7 @@ public:
 		return matrix_buffer;
 	}
 
-	static std::pair<uint32_t, uint32_t> matrix_encode(matrix<uint32_t>& matrix, uint32_t data) {
+	static std::pair<uint32_t, uint32_t> single_encode(uint32_t data, matrix<uint32_t> matrix) {
 		for (std::size_t i = 0; i < matrix.size(); i++) {
 			for (std::size_t c = 0; c < matrix.at(i).size(); c++) {
 				if (matrix.at(i).at(c) == data) 
@@ -75,76 +75,105 @@ public:
 		}
 		return std::make_pair(0, 0);
 	}
-
-	static uint32_t matrix_decode(matrix<uint32_t>& matrix, std::pair<uint32_t, uint32_t> location) {
+	static uint32_t single_decode(std::pair<uint32_t, uint32_t> location, matrix<uint32_t> matrix) {
 		return matrix.at(location.first).at(location.second);
 	}
 
-
-	static std::vector<std::pair<uint32_t, uint32_t>> matrix_vector_encode(matrix<uint32_t>& matrix, std::vector<uint32_t> data) {
-		std::vector<std::pair<uint32_t, uint32_t>> encoded;
-		for (std::size_t i = 0; i < data.size(); i++) {
-			encoded.push_back(matrix_encode(matrix, data.at(i)));
-		}
-		return encoded;
-	}
-
-	static std::vector<uint32_t> matrix_vector_decode(matrix<uint32_t>& matrix, std::vector<std::pair<uint32_t, uint32_t>> locations) {
-		std::vector<uint32_t> decoded_data;
-		for (std::size_t i = 0; i < locations.size(); i++) {
-			decoded_data.push_back(matrix.at(locations.at(i).first).at(locations.at(i).second));
-		}
-		return decoded_data;
-	}
-
-	static std::string plaintext_encode(std::string data, std::string key, bool expand=false, bool preserve_special=false, char sacrifice='Z') {
-		std::vector<uint32_t> present_characters;
-		for (std::size_t i = 0; i < key.size(); i++) {
-			auto key_iterator = std::find(present_characters.begin(), present_characters.end(), key.at(i));
-			if (key_iterator != present_characters.end()) throw DuplicateCharInKeyException();
-			present_characters.push_back(key.at(i));
-		}
-
-		for (std::size_t i = 0; i < present_characters.size(); i++) {
-			if (present_characters.at(i) >= 'a' && present_characters.at(i) <= 'z') {
-				present_characters.at(i) = present_characters.at(i) - 32;
-			}
-		}
-
-		key = std::string(present_characters.begin(), present_characters.end());
-
-
+	static std::vector<std::pair<uint32_t, uint32_t>> encode_data(std::string data, std::string key, int8_t sacrifice = '\0', matrix<uint32_t>* matrix_output=nullptr) {
+		/* This is the character set that will be used for the encoding */
 		std::vector<uint32_t> matrix_base{'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'};
+
+		/* Lambda that returns true if duplicate characters are found within the supplied string */
+		auto check_duplicates = [](std::string* target)->bool {
+			std::vector<uint32_t> character_buffer;
+			for (std::size_t i = 0; i < target->size(); i++) {
+				uint32_t current_character = target->at(i);
+				auto iterator = std::find(character_buffer.begin(), character_buffer.end(), current_character);
+				if (iterator != character_buffer.end()) return true;
+				character_buffer.push_back(current_character);
+			}
+			return false;
+		};
+
+		/* Lambda that overwrites lowercae chars with uppercase chars */
+		auto convert_uppercase = [](std::string* target)->void {
+			for (std::size_t i = 0; i < target->size(); i++) {
+				int8_t* current_character = (int8_t*)(&target->at(i));
+				if (*current_character >= 'a' && *current_character <= 'z')
+					*current_character -= 32;
+			}
+		};
+
+		/* Lambda that strips a string of non-letter characters */
+		auto remove_nonletters = [](std::string* target)->void {
+			std::string buffer_string;
+			for (std::size_t i = 0; i < target->size(); i++) {
+				int8_t current_character = target->at(i);
+				if (current_character >= 'A' && current_character <= 'Z')
+					buffer_string.push_back(current_character);
+			}
+			*target = buffer_string;
+		};
+
+		/* Sanitizes the key: Checks for duplicate characters, checks key length, and converts case.
+		Removes non-letter characters from key */
 		if (key.size() > matrix_base.size()) throw KeyLengthGreaterThanBaseException();
+		if (check_duplicates(&key)) throw DuplicateCharInKeyException();
+		else { convert_uppercase(&key); remove_nonletters(&key); }
 
-		if (!expand) {
-			auto key_iterator = std::find(key.begin(), key.end(), sacrifice);
-			if (key_iterator != key.end()) throw SacrificeAppearsInKeyException();
 
+		/* Checks the presence of the sacrifice in the key */
+		auto key_iterator = std::find(key.begin(), key.end(), sacrifice);
+		if (key_iterator != key.end()) throw SacrificeAppearsInKeyException();
+
+		/* Checks the presence of the sacrifice in the base, and erases from base 
+		this will not run if the sacrifice is a nullbyte, which means the matrix will expand
+		beyond 5x5 to 6x6 in order to include the additional characters, so that no 
+		characters will have to be sacrificed. */
+		if (sacrifice != '\0') {
 			auto base_iterator = std::find(matrix_base.begin(), matrix_base.end(), sacrifice);
 			if (base_iterator == matrix_base.end()) throw SacrificeNotInBaseException();
-			matrix_base.erase(base_iterator);
+			else matrix_base.erase(base_iterator);
 		}
-
-		matrix<uint32_t> inscribed_matrix = inscribe_matrix(matrix_base, std::vector<uint32_t>(key.begin(), key.end()), expand ? 6 : 5);
 		
-		std::string encoded_formated;
+		/* Sanitizes input data to uppercase and strips non-letters */
+		convert_uppercase(&data);
+		remove_nonletters(&data);
 
+		/* Creates the matrix that will be used to encode data */
+		matrix<uint32_t> encoder_matrix = create_matrix(matrix_base, std::vector<uint32_t>(key.begin(), key.end()), sacrifice == '\0' ? 6 : 5);
+			
+		/* Stores the created matrix if user wishes */
+		if (matrix_output != nullptr) *matrix_output = encoder_matrix;
+
+		/* This will store the encoded output data. */
+		std::vector<std::pair<uint32_t, uint32_t>> encoded_output_data;
+
+		/* Loops over every character in the input data, encodes and writes to output data */
 		for (std::size_t i = 0; i < data.size(); i++) {
-			int8_t current_char = data.at(i);
-			if (current_char >= 'a' && current_char <= 'z') current_char -= 32;
-			else if (!(current_char >= 'A' && current_char <= 'Z')) {
-				if(preserve_special) encoded_formated.push_back(current_char);
-				continue;
-			}
+			int8_t current_character = data.at(i);
+			
+			/* Encodes the current character */
+			std::pair<uint32_t, uint32_t> encoded = single_encode(current_character, encoder_matrix);
 
-			std::pair<uint32_t, uint32_t> encoded = matrix_encode(inscribed_matrix, current_char);
-			encoded_formated.append(std::to_string(encoded.first+1));
-			encoded_formated.append(std::to_string(encoded.second+1));
-			if(i != data.size()-1) encoded_formated.push_back(',');
+			/* Adds the encoded character to the output data */
+			encoded_output_data.push_back(encoded);
 		}
 
-		return encoded_formated;
+		return encoded_output_data;
+	}
+	static std::vector<std::pair<uint32_t, uint32_t>> encode_data(std::vector<uint32_t> data, matrix<uint32_t> encoder_matrix) {
+		/* This is where the encoded output data will be stored */
+		std::vector<std::pair<uint32_t, uint32_t>> encoded_data;
+		
+		/* Loops over every item in input data, encodes, and adds to encoded_data vector */
+		for (std::size_t i = 0; i < data.size(); i++) {
+			uint32_t current_int = data.at(i);
+			std::pair<uint32_t, uint32_t> encoded = single_encode(current_int, encoder_matrix);
+			encoded_data.push_back(encoded);
+		}
+
+		return encoded_data;
 	}
 
 	/* TO-DO: MAKE DECODER FOR ^ */
